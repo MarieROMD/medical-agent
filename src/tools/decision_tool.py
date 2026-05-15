@@ -1,37 +1,15 @@
-"""
-decision_tool.py — Outil 3 de l'agent médical
-Combine dossier patient + guidelines OMS/HAS
-pour générer une aide à la décision clinique complète.
 
-C'est l'outil le plus puissant de l'agent :
-il cherche en parallèle dans les deux bases FAISS
-et retourne un contexte structuré pour le LLM.
-"""
 
 import os
 import sys
 
-# Ajouter le dossier racine au path Python
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from langchain_community.vectorstores import FAISS
 
-
 class DecisionTool:
-    """
-    Outil d'aide à la décision clinique.
 
-    Combine automatiquement :
-      1. Dossier(s) patient(s) → base FAISS patients
-      2. Recommandations OMS/HAS → base FAISS médicale
 
-    Utilisé pour les questions complexes comme :
-      - "Quel traitement pour le patient Benali ?"
-      - "Le traitement de Vincent est-il adapté ?"
-      - "Que faire pour ce patient diabétique mal équilibré ?"
-    """
-
-    # Nom et description utilisés par l'agent
     name = "clinical_decision"
     description = (
         "Utilise cet outil quand le médecin veut une aide à la décision "
@@ -42,11 +20,7 @@ class DecisionTool:
     )
 
     def __init__(self, patient_store: FAISS, medical_store: FAISS):
-        """
-        Paramètres :
-          patient_store : base FAISS depuis data/index_patients/
-          medical_store : base FAISS depuis data/index_medical/
-        """
+     
         self.patient_store = patient_store
         self.medical_store = medical_store
 
@@ -76,7 +50,6 @@ class DecisionTool:
         # ── Étape 3 : Combiner les deux contextes ─────────────────────
         return self._format_combined_context(patient_context, medical_context)
 
-    # ── Recherche patients ─────────────────────────────────────────────────
     def _search_patients(self, query: str, k: int) -> list:
         """Cherche dans la base patients et retourne les docs pertinents"""
         try:
@@ -86,7 +59,6 @@ class DecisionTool:
             print(f"⚠️ Erreur recherche patients : {e}")
             return []
 
-    # ── Recherche médicale ─────────────────────────────────────────────────
     def _search_medical(self, query: str, k: int) -> list:
         """Cherche dans la base médicale et retourne les docs pertinents"""
         try:
@@ -96,7 +68,6 @@ class DecisionTool:
             print(f"⚠️ Erreur recherche médicale : {e}")
             return []
 
-    # ── Formatage du contexte combiné ─────────────────────────────────────
     def _format_combined_context(
         self,
         patient_docs: list,

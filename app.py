@@ -139,63 +139,8 @@ with st.sidebar:
 
     st.divider()
 
-    # Formulaire prédiction ML
-    st.markdown("### 🤖 Prédiction ML — Risque diabète")
-    st.caption("Modèle : Oduwo/Diabetes_assessment_Model")
 
-    with st.form("prediction_form"):
-        st.markdown("**Données cliniques du patient**")
-        glucose     = st.number_input("Glycémie (mg/dL)", 50, 300, 120,
-                                       help="Glycémie à jeun en mg/dL")
-        bmi         = st.number_input("IMC (kg/m²)", 10.0, 60.0, 25.0,
-                                       step=0.1)
-        age         = st.number_input("Âge (ans)", 1, 100, 45)
-        bp          = st.number_input("Tension diastolique (mmHg)", 40, 150, 80)
-        pregnancies = st.number_input("Nombre de grossesses", 0, 20, 0,
-                                       help="Mettre 0 pour les hommes")
-        insulin     = st.number_input("Insuline sérique (µU/mL)", 0, 500, 80)
-        dpf         = st.number_input("Score génétique (0–2.5)", 0.0, 2.5, 0.5,
-                                       step=0.1,
-                                       help="Antécédents familiaux diabète")
-        submitted   = st.form_submit_button("🔮 Prédire le risque",
-                                             use_container_width=True)
-
-    if submitted:
-        patient_data = {
-            "glucose":           glucose,
-            "bmi":               bmi,
-            "age":               age,
-            "blood_pressure":    bp,
-            "pregnancies":       pregnancies,
-            "insulin":           insulin,
-            "diabetes_pedigree": dpf
-        }
-        with st.spinner("Calcul en cours..."):
-            pred_result = agent.pred_tool.run(patient_data)
-
-        if "ÉLEVÉ" in pred_result:
-            st.error(f"🔴 {pred_result}")
-        elif "MODÉRÉ" in pred_result:
-            st.warning(f"🟡 {pred_result}")
-        elif "FAIBLE" in pred_result:
-            st.success(f"🟢 {pred_result}")
-        else:
-            st.info(pred_result)
-
-    st.divider()
-
-    # Outils disponibles
-    st.markdown("### 🔧 Outils de l'agent")
-    st.markdown("""
-| Outil | Se déclenche quand... |
-|---|---|
-| 🗂️ Dossier patient | nom patient / symptômes |
-| 📚 Guidelines OMS | protocole / médicament |
-| 🧠 Décision clinique | traitement / aide |
-| 🤖 Prédiction ML | risque / score |
-""")
-
-    st.divider()
+  
 
     # Boutons utilitaires
     if st.button("🗑️ Nouvelle conversation", use_container_width=True):

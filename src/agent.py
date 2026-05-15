@@ -1,21 +1,12 @@
-"""
-agent.py — Vrai LangChain Agent (Option 3 — Agentic RAG)
-Utilise ZERO_SHOT_REACT_DESCRIPTION pour décider :
-  - quand faire une recherche (patient, medical, decision)
-  - quand répondre directement (salutation, question générale)
-  - quel outil utiliser parmi les 4 disponibles
 
-Pathologies couvertes : Diabète (type 1 & 2), Hypertension, Cancer
-"""
 
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from langchain.agents import initialize_agent, AgentType, Tool
-from langchain.memory import ConversationBufferWindowMemory
 from langchain_ollama import OllamaLLM
+from langchain.memory import ConversationBufferWindowMemory
 
 from src.tools.patient_tool    import PatientTool
 from src.tools.medical_tool    import MedicalTool
@@ -27,40 +18,25 @@ OLLAMA_MODEL = "mistral"
 
 
 class MedicalAgent:
-    """
-    Vrai agent LangChain ZERO_SHOT_REACT_DESCRIPTION.
-
-    L'agent décide SEUL à chaque question :
-      1. Dois-je chercher dans les dossiers patients ?
-      2. Dois-je chercher dans les guidelines OMS/HAS ?
-      3. Dois-je combiner patient + guidelines ?
-      4. Dois-je faire une prédiction ML ?
-      5. Puis-je répondre directement sans chercher ?
-
-    Pathologies : Diabète type 1 & 2, Hypertension, Cancer
-    """
+   
 
     def __init__(self, ollama_model: str = OLLAMA_MODEL):
-        self.llm       = OllamaLLM(model=ollama_model, temperature=0.1)
-        self.pred_tool = PredictionTool()
-        self._agent    = None
-        self._ready    = False
+        self.llm           = OllamaLLM(model=ollama_model, temperature=0.1)
+        self.patient_tool  = None
+        self.medical_tool  = None
+        self.decision_tool = None
+        self.pred_tool     = PredictionTool()
+        self._ready        = False
 
-        # Mémoire conversationnelle — retient les 5 derniers échanges
+        
         self.memory = ConversationBufferWindowMemory(
             memory_key="chat_history",
             k=5,
             return_messages=True
         )
 
-    # ──────────────────────────────────────────────────────────────────────
-    # INITIALISATION
-    # ──────────────────────────────────────────────────────────────────────
+   
     def initialize(self) -> bool:
-        """
-        Charge les index FAISS et initialise le vrai LangChain Agent
-        avec ses 4 outils enregistrés.
-        """
         if not index_exists(INDEX_PAT):
             print("⚠️  Index patients manquant → python src/ingestion.py")
             return False
@@ -68,182 +44,165 @@ class MedicalAgent:
             print("⚠️  Index médical manquant → python src/ingestion.py")
             return False
 
-        # Charger les bases vectorielles FAISS
         pat_store = load_index(INDEX_PAT)
         med_store = load_index(INDEX_MED)
 
-        # Instancier les 3 outils RAG
-        patient_tool  = PatientTool(pat_store)
-        medical_tool  = MedicalTool(med_store)
-        decision_tool = DecisionTool(pat_store, med_store)
-
-        # ── Enregistrer les 4 outils LangChain ────────────────────────
-        langchain_tools = [
-
-            Tool(
-                name="patient_search",
-                func=patient_tool.run,
-                description=(
-                    "Utilise cet outil pour chercher des informations "
-                    "sur un patient spécifique dans les dossiers médicaux. "
-                    "Couvre : diabète type 1 et type 2 (glycémie, HbA1c, insuline), "
-                    "hypertension artérielle (tension, cardio, AVC), "
-                    "cancer (tumeur, marqueurs, chimiothérapie). "
-                    "Input : nom du patient ou numéro dossier (ex: Benali, P-20240001)."
-                )
-            ),
-
-            Tool(
-                name="medical_search",
-                func=medical_tool.run,
-                description=(
-                    "Utilise cet outil pour chercher des recommandations médicales "
-                    "officielles OMS/HAS. "
-                    "Couvre : protocoles diabète type 1 et type 2, "
-                    "guidelines hypertension artérielle, "
-                    "protocoles oncologiques (cancer sein, côlon, prostate, poumon, lymphome). "
-                    "Input : question médicale générale sur protocole ou traitement."
-                )
-            ),
-
-            Tool(
-                name="clinical_decision",
-                func=decision_tool.run,
-                description=(
-                    "Utilise cet outil pour une aide à la décision clinique complète "
-                    "qui nécessite à la fois le dossier patient ET les guidelines OMS/HAS. "
-                    "Utilise pour : adapter un traitement, évaluer si une thérapie est correcte, "
-                    "prise en charge d'un patient diabétique, hypertendu ou cancéreux. "
-                    "Input : question de décision clinique avec nom du patient."
-                )
-            ),
-
-            Tool(
-                name="diabetes_prediction",
-                func=self._prediction_wrapper,
-                description=(
-                    "Utilise cet outil UNIQUEMENT pour prédire le risque de diabète "
-                    "d'un patient à partir de données numériques. "
-                    "Input : 'glucose=X bmi=Y age=Z' avec les valeurs numériques. "
-                    "Exemple : 'glucose=185 bmi=29.7 age=53'."
-                )
-            ),
-        ]
-
-        # ── Initialiser le vrai LangChain Agent REACT ─────────────────
-        self._agent = initialize_agent(
-            tools=langchain_tools,
-            llm=self.llm,
-            agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
-            memory=self.memory,
-            verbose=True,
-            max_iterations=5,
-            early_stopping_method="generate",
-            handle_parsing_errors=True,
-            agent_kwargs={
-                "prefix": """Tu es un assistant médical expert conçu pour aider
-les médecins généralistes dans leur pratique quotidienne.
-
-Tu couvres 3 domaines médicaux :
-- 🩸 Diabète type 1 et type 2 : glycémie, HbA1c, insuline, metformine
-- ❤️  Hypertension artérielle  : tension, antihypertenseurs, risque CV
-- 🎗️  Cancer                   : oncologie, chimiothérapie, marqueurs tumoraux
-
-Tu as accès à 4 outils. À chaque question tu décides SEUL :
-- Question sur un patient précis → utilise patient_search
-- Question sur des recommandations médicales → utilise medical_search
-- Question nécessitant patient + guidelines → utilise clinical_decision
-- Prédiction de risque avec des chiffres → utilise diabetes_prediction
-- Question simple (bonjour, définition connue) → réponds DIRECTEMENT sans outil
-
-Réponds toujours en français. Cite tes sources à la fin.""",
-
-                "format_instructions": """Pour utiliser un outil, utilise EXACTEMENT ce format :
-
-Thought: [ton raisonnement — quel outil et pourquoi]
-Action: [patient_search | medical_search | clinical_decision | diabetes_prediction]
-Action Input: [la question à envoyer à l'outil]
-Observation: [résultat automatiquement rempli]
-
-Quand tu as la réponse finale :
-Thought: J'ai toutes les informations nécessaires.
-Final Answer: [ta réponse clinique complète en français]"""
-            }
-        )
+        self.patient_tool  = PatientTool(pat_store)
+        self.medical_tool  = MedicalTool(med_store)
+        self.decision_tool = DecisionTool(pat_store, med_store)
 
         self._ready = True
-        print("✅ LangChain Agent ZERO_SHOT_REACT initialisé")
-        print("   🗂️  patient_search      → dossiers patients (diabète/HTA/cancer)")
-        print("   📚  medical_search      → guidelines OMS/HAS")
-        print("   🧠  clinical_decision   → décision combinée")
-        print("   🤖  diabetes_prediction → prédiction ML")
+        print("✅ Agent médical initialisé — 4 outils actifs")
+        print("   🗂️  patient_tool    → dossiers patients")
+        print("   📚  medical_tool    → guidelines OMS/HAS")
+        print("   🧠  decision_tool   → décision combinée")
+        print("   🤖  pred_tool       → prédiction ML")
         return True
 
-    # ──────────────────────────────────────────────────────────────────────
-    # WRAPPER PRÉDICTION
-    # ──────────────────────────────────────────────────────────────────────
-    def _prediction_wrapper(self, input_str: str) -> str:
+ 
+    def _choose_tool(self, question: str) -> str:
+       
+        q = question.lower()
+
+      
+        direct_kw = [
+            "bonjour", "bonsoir", "salut", "merci", "au revoir",
+            "comment vas", "comment tu", "qui es-tu", "qui êtes-vous",
+            "qu'est-ce que tu", "c'est quoi le rag", "c'est quoi un agent"
+        ]
+        if any(k in q for k in direct_kw):
+            return "direct"
+
+       
+        prediction_kw = [
+            "prédiction", "prédit", "predict", "prédire",
+            "risque diabète", "probabilité diabète",
+            "score risque", "évaluer le risque", "estimer"
+        ]
+        if any(k in q for k in prediction_kw):
+            return "prediction"
+
+        decision_kw = [
+            "que faire", "quel traitement", "adapter le traitement",
+            "ajuster", "changer", "aide à la décision",
+            "est adapté", "est-ce adapté", "est-ce correct",
+            "quelle thérapie", "prise en charge",
+            "conduite à tenir", "que proposez"
+        ]
+        if any(k in q for k in decision_kw):
+            return "decision"
+
+        patient_kw = [
+           
+            "patient", "dossier", "monsieur", "madame",
+            "p-2024", "p00", "p01", "p02", "p03",
+            "glycémie", "hba1c", "insuline",
+            "diabète", "diabétique", "hyperglycémie", "hypoglycémie",
+            "tension", "hypertension", "hypertendu",
+            "hta", "pression artérielle",
+            "cancer", "tumeur", "métastase",
+            "chimiothérapie", "oncologie", "lymphome",
+            "psa", "ca 15-3", "marqueur",
+            "benali", "trabelsi", "mansouri", "gharbi",
+            "jebali", "baccouche", "romdhani",
+            "vincent", "martin", "chaabane", "aloui",
+            "zouari", "hamza", "ferchichi",
+            "bernard", "ayari", "miled", "khelif",
+            "dridi", "marzouki"
+        ]
+        if any(k in q for k in patient_kw):
+            return "patient"
+
+        medical_kw = [
+            "protocole", "recommandation", "guideline",
+            "oms", "has", "critère", "définition",
+            "valeur normale", "valeur cible", "seuil",
+            "metformine", "insulinothérapie",
+            "antihypertenseur", "bêtabloquant",
+            "folfiri", "folfox", "abvd",
+            "pembrolizumab", "trastuzumab",
+            "radiothérapie", "immunothérapie"
+        ]
+        if any(k in q for k in medical_kw):
+            return "medical"
+
+        
+        return "decision"
+
+   
+    def _generate_response(self, question: str, context: str, tool_used: str) -> str:
         """
-        Parse la string d'input et appelle prediction_tool.
-        Format attendu : 'glucose=185 bmi=29.7 age=53'
+        Génère une réponse clinique structurée via Ollama
+        en utilisant le contexte récupéré par l'outil.
         """
-        patient_data = {
-            "glucose":           120.0,
-            "bmi":                25.0,
-            "age":                40,
-            "blood_pressure":     72.0,
-            "pregnancies":         0,
-            "skin_thickness":     20.0,
-            "insulin":            80.0,
-            "diabetes_pedigree":   0.5
-        }
+        history = ""
+        messages = self.memory.chat_memory.messages
+        if messages:
+            lines = ["=== Historique récent ==="]
+            for msg in messages[-4:]:
+                role = "Médecin" if msg.type == "human" else "Agent"
+                lines.append(f"{role} : {msg.content[:200]}")
+            history = "\n".join(lines) + "\n\n"
+
+       
+        if tool_used == "direct":
+            prompt = f"""Tu es un assistant médical expert en diabétologie,
+hypertension et oncologie.
+Réponds de façon naturelle et professionnelle en français.
+
+{history}Question : {question}
+
+Réponse :"""
+
+        else:
+            tool_labels = {
+                "patient":    "dossiers patients médicaux",
+                "medical":    "guidelines OMS/HAS officielles",
+                "decision":   "dossiers patients + guidelines OMS/HAS",
+                "prediction": "modèle ML prédiction diabète"
+            }
+            label = tool_labels.get(tool_used, "sources médicales")
+
+            prompt = f"""Tu es un assistant médical expert conçu pour aider
+les médecins généralistes dans leur pratique quotidienne.
+
+Tu couvres 3 pathologies :
+- 🩸 Diabète type 1 et type 2
+- ❤️  Hypertension artérielle
+- 🎗️  Cancer (sein, côlon, prostate, poumon, lymphome)
+
+RÈGLES STRICTES :
+- Réponds UNIQUEMENT à partir du contexte médical fourni ci-dessous
+- Si une information est absente : dis "Information non disponible dans mes sources"
+- Structure ta réponse avec des sections claires
+- Cite les sources (nom du fichier + page) à la fin
+- Signale toute urgence avec ⚠️
+- Ne remplace JAMAIS le jugement clinique du médecin
+- Réponds en français
+
+{history}=== CONTEXTE MÉDICAL (source : {label}) ===
+{context}
+
+=== QUESTION DU MÉDECIN ===
+{question}
+
+=== RÉPONSE CLINIQUE ==="""
 
         try:
-            for part in input_str.strip().split():
-                if "=" in part:
-                    key, val = part.split("=", 1)
-                    key = key.strip().lower()
-                    val = val.strip()
-
-                    key_map = {
-                        "glucose":     "glucose",
-                        "glycemie":    "glucose",
-                        "glycémie":    "glucose",
-                        "bmi":         "bmi",
-                        "imc":         "bmi",
-                        "age":         "age",
-                        "âge":         "age",
-                        "bp":          "blood_pressure",
-                        "tension":     "blood_pressure",
-                        "insulin":     "insulin",
-                        "insuline":    "insulin",
-                        "pregnancies": "pregnancies",
-                        "grossesses":  "pregnancies",
-                        "dpf":         "diabetes_pedigree",
-                        "pedigree":    "diabetes_pedigree"
-                    }
-
-                    mapped = key_map.get(key, key)
-                    if mapped in patient_data:
-                        if mapped in ["age", "pregnancies"]:
-                            patient_data[mapped] = int(float(val))
-                        else:
-                            patient_data[mapped] = float(val)
-
+            return self.llm.invoke(prompt)
         except Exception as e:
-            return f"⚠️ Erreur parsing : {e}. Format : 'glucose=185 bmi=29.7 age=53'"
+            return f"⚠️ Erreur Ollama : {str(e)}\nVérifie qu'Ollama est lancé avec : ollama serve"
 
-        return self.pred_tool.run(patient_data)
-
-    # ──────────────────────────────────────────────────────────────────────
-    # RÉPONSE PRINCIPALE
-    # ──────────────────────────────────────────────────────────────────────
+  
     def answer(self, question: str, patient_data: dict = None) -> dict:
         """
-        L'agent LangChain REACT décide SEUL comment répondre.
+        Répond à une question médicale du médecin.
 
-        Cycle REACT :
-          Thought → Action → Observation → Thought → Final Answer
+        L'agent :
+          1. Choisit l'outil approprié (_choose_tool)
+          2. Récupère le contexte avec l'outil
+          3. Génère la réponse via Ollama (_generate_response)
+          4. Met à jour la mémoire
         """
         if not self._ready:
             return {
@@ -252,133 +211,46 @@ Final Answer: [ta réponse clinique complète en français]"""
                 "context":   ""
             }
 
-        # Prédiction directe si données numériques fournies
-        if patient_data and (
-            "prédict" in question.lower() or
-            "risque"  in question.lower()
-        ):
-            context = self.pred_tool.run(patient_data)
-            return {
-                "answer":    context,
-                "tool_used": "prediction",
-                "context":   context
-            }
+        tool_used = self._choose_tool(question)
 
-        try:
-            # ── L'agent REACT décide SEUL ──────────────────────────────
-            response  = self._agent.invoke({"input": question})
-            answer    = response.get("output", str(response))
-            tool_used = self._detect_tool_used(question)
+        context = ""
 
-            return {
-                "answer":    answer,
-                "tool_used": tool_used,
-                "context":   "Raisonnement REACT : Thought → Action → Observation → Answer"
-            }
+        if tool_used == "direct":
+            context = ""
 
-        except Exception as e:
-            # Fallback → réponse directe LLM
-            try:
-                direct = self.llm.invoke(
-                    f"Tu es un assistant médical expert. Réponds en français.\n\n"
-                    f"Question : {question}"
+        elif tool_used == "prediction":
+            if patient_data:
+                context = self.pred_tool.run(patient_data)
+            else:
+                context = (
+                    "Aucune donnée numérique fournie.\n"
+                    "Utilise le formulaire dans la barre latérale "
+                    "pour entrer glycémie, IMC, âge, tension."
                 )
-                return {
-                    "answer":    direct,
-                    "tool_used": "direct",
-                    "context":   "Réponse directe sans outil (fallback)"
-                }
-            except Exception:
-                pass
 
-            return {
-                "answer":    f"⚠️ Erreur : {str(e)}\nVérifie qu'Ollama est lancé.",
-                "tool_used": "aucun",
-                "context":   ""
-            }
+        elif tool_used == "patient":
+            context = self.patient_tool.run(question, k=6)
 
-    # ──────────────────────────────────────────────────────────────────────
-    # DÉTECTION OUTIL — pour badge interface uniquement
-    # ──────────────────────────────────────────────────────────────────────
-    def _detect_tool_used(self, question: str) -> str:
-        """
-        Détecte quel outil a été utilisé pour afficher le badge.
-        La vraie décision est faite par le LangChain Agent REACT.
-        """
-        q = question.lower()
+        elif tool_used == "medical":
+            context = self.medical_tool.run(question, k=5)
 
-        # ── Prédiction ML ──────────────────────────────────────────────
-        prediction_kw = [
-            "prédiction", "risque", "score", "predict",
-            "probabilité", "estimer", "calculer"
-        ]
+        else: 
+            context = self.decision_tool.run(question, k=4)
 
-        # ── Décision clinique ──────────────────────────────────────────
-        decision_kw = [
-            "traitement", "que faire", "adapter", "décision",
-            "prise en charge", "conduite", "recommande",
-            "est adapté", "suggère", "que proposez"
-        ]
+      
+        answer = self._generate_response(question, context, tool_used)
 
-        # ── Dossier patient — 3 pathologies ───────────────────────────
-        patient_kw = [
-            # identifiants
-            "patient", "dossier", "monsieur", "madame", "p-2024",
-            # diabète type 1 et 2
-            "glycémie", "hba1c", "insuline", "diabète", "diabétique",
-            "hyperglycémie", "hypoglycémie", "diabète type 1",
-            "diabète type 2", "metformine", "glargine",
-            # hypertension
-            "tension", "hypertension", "hypertendu", "hypertendue",
-            "amlodipine", "lisinopril", "ramipril", "losartan",
-            "hta", "pression artérielle",
-            # cancer
-            "cancer", "tumeur", "métastase", "chimiothérapie",
-            "oncologie", "lymphome", "leucémie", "carcinome",
-            "psa", "ca 15-3", "ace", "marqueur tumoral",
-            "radiothérapie", "immunothérapie",
-            # noms des 20 patients
-            "benali", "trabelsi", "mansouri", "gharbi",
-            "jebali", "baccouche", "romdhani",
-            "vincent", "martin", "chaabane", "aloui",
-            "zouari", "hamza", "ferchichi",
-            "bernard", "ayari", "miled", "khelif",
-            "dridi", "marzouki"
-        ]
+  
+        self.memory.chat_memory.add_user_message(question)
+        self.memory.chat_memory.add_ai_message(answer[:500])
 
-        # ── Guidelines médicales ───────────────────────────────────────
-        medical_kw = [
-            # général
-            "protocole", "recommandation", "guideline",
-            "oms", "has", "critère", "définition",
-            "valeur normale", "valeur cible", "seuil",
-            # diabète
-            "insulinothérapie", "antidiabétique",
-            # hypertension
-            "antihypertenseur", "bêtabloquant", "diurétique",
-            "iec", "ara2", "inhibiteur calcique",
-            "hta résistante", "hta sévère",
-            # cancer
-            "folfiri", "folfox", "abvd", "tchp",
-            "pembrolizumab", "trastuzumab", "bevacizumab",
-            "cancer sein", "cancer côlon", "cancer poumon",
-            "cancer prostate", "lymphome hodgkin"
-        ]
+        return {
+            "answer":    answer,
+            "tool_used": tool_used,
+            "context":   context
+        }
 
-        if any(k in q for k in prediction_kw):
-            return "prediction"
-        if any(k in q for k in decision_kw):
-            return "decision"
-        if any(k in q for k in patient_kw):
-            return "patient"
-        if any(k in q for k in medical_kw):
-            return "medical"
-
-        return "direct"
-
-    # ──────────────────────────────────────────────────────────────────────
-    # UTILITAIRES
-    # ──────────────────────────────────────────────────────────────────────
+  
     def clear_memory(self):
         """Efface l'historique de conversation"""
         self.memory.clear()
@@ -388,7 +260,7 @@ Final Answer: [ta réponse clinique complète en français]"""
         return {
             "ready":        self._ready,
             "model":        OLLAMA_MODEL,
-            "agent_type":   "ZERO_SHOT_REACT_DESCRIPTION",
+            "agent_type":   "Agentic RAG — Option 3",
             "tools_active": 4 if self._ready else 0,
-            "history_len":  len(self.memory.chat_memory.messages) if self._ready else 0
+            "history_len":  len(self.memory.chat_memory.messages)
         }

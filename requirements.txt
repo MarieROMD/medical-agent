@@ -1,31 +1,21 @@
-# Medical Agent IA — Dépendances complètes
-# Option 3 : Agentic RAG avec LangChain ZERO_SHOT_REACT
-# pip install -r requirements.txt
 
-# === CORE LANGCHAIN ===
-# langchain-community 0.3.7 nécessite langchain-core>=0.3.17
-# on laisse pip résoudre la version compatible automatiquement
 langchain==0.3.7
 langchain-community==0.3.7
 langchain-ollama==0.2.1
 langchain-core>=0.3.17
 
-# === EMBEDDINGS & BASE VECTORIELLE ===
 sentence-transformers==3.3.1
 faiss-cpu==1.9.0
 
-# === DOCUMENTS PDF ===
 pypdf==5.1.0
 
-# === ML MODEL HUGGINGFACE ===
 huggingface_hub==0.26.2
 joblib==1.4.2
 scikit-learn==1.5.2
 numpy==1.26.4
 
-# === INTERFACE STREAMLIT ===
+
 streamlit==1.40.2
 
-# === UTILITAIRES ===
 python-dotenv==1.0.1
 tqdm==4.67.1
